@@ -1,0 +1,13 @@
+%% vim: set ft=erlang : -*- erlang -*-
+{application, rafte,
+ [
+  {description, "An implementation of the Raft consensus algorithm"},
+  {vsn, git},
+  {registered, [rafte_sup]},
+  {applications, [
+                  kernel,
+                  stdlib
+                 ]},
+  {mod, { rafte_app, []}},
+  {env, []}
+ ]}.
