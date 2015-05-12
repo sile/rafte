@@ -169,7 +169,8 @@ code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
 %% [follower]
-%% - candidate/leaderからのRPCに応答する (! 逆にfollower以外は応答しないのか？)
+%% - candidate/leaderからのRPCに応答する
+%%   - ! 逆にfollower以外は応答しないのか？ => termが小さい場合はリジェクトするので結果的には応答しないに等しい(?)
 %% - timeoutしたらcandidateになる
 
 %% @private
@@ -197,6 +198,13 @@ candidate(timeout, State0) ->
     {next_state, candidate, State1#state{vote_ref = VoteRef}, ?NEXT_TIMEOUT};
 candidate(Event, State) ->
     {stop, {unknown_candiate_event, Event}, State}.
+
+%% [leader]
+%% - election時にからのappend-rpc(heartbeat)を送る. timeoutを防ぐために定期的に送る ($5.2)
+%% - クライアントからコマンドを受けたら、ローカルログに追加し、状態機械に適用後に応答する ($5.3)
+%%   - NOTE: 状態機械に適用されるのはcommit後 (all servers条件を参照)
+%% - クライアントとindex/termに齟齬があったら是正するよ、的な話($5.3)。完了したらnextIndex[]/matchIndex[]を更新
+%% - N > commitIndex and is_majorit(mmatchIndex[i] >= N) and log[N].term=current then commitIndex = N ($5.3,$5.4)
 
 %% @private
 leader(Event, State) ->
