@@ -62,8 +62,11 @@ handle_call(Request, From, State) ->
 
 %% @private
 handle_cast({update_server_specs, ServerSpecs}, State0) ->
+    %% TODO: 更新内容に関しても、最初にクラスタ内で合意を取った方が良いかもしれない
+    io:format("# [~p:~p] ~p: update_server_specs=~w\n", [?MODULE, ?LINE, self(), ServerSpecs]),
     State1 = State0#state{server_specs = ServerSpecs, generation = State0#state.generation + 1},
-    %% TODO: setup new generation cluster
+    %% TODO: 世代交代をハンドリングする
+    ok = start_local_raft_servers(State1, ServerSpecs),
     {noreply, State1};
 handle_cast(Request, State) ->
     {stop, {unknown_cast, Request}, State}.
@@ -79,3 +82,15 @@ terminate(_Reason, _State) ->
 %% @private
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+%%----------------------------------------------------------------------------------------------------------------------
+%% Internal Functions
+%%----------------------------------------------------------------------------------------------------------------------
+-spec start_local_raft_servers(#state{}, [rafte:server_spec()]) -> ok.
+start_local_raft_servers(_, []) ->
+    ok;
+start_local_raft_servers(State, [Spec | Specs]) when element(1, Spec) =/= node() ->
+    start_local_raft_servers(State, Specs);
+start_local_raft_servers(State, [_Spec | Specs]) -> % TODO: use Spec
+    {ok, _} = rafte_server_sup:start_child(State#state.cluster_name, length(State#state.server_specs)),
+    start_local_raft_servers(State, Specs).

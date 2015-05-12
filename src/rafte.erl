@@ -25,7 +25,8 @@
 %%----------------------------------------------------------------------------------------------------------------------
 %% Types
 %%----------------------------------------------------------------------------------------------------------------------
--type server_spec() :: {node(), module(), atom(), [term()]}. % node + MFArgs
+%% -type server_spec() :: {node(), module(), atom(), [term()]}. % node + MFArgs
+-type server_spec() :: {node()}.
 -type cluster_name() :: term().
 
 %%----------------------------------------------------------------------------------------------------------------------
@@ -33,7 +34,11 @@
 %%----------------------------------------------------------------------------------------------------------------------
 -spec create_cluster(cluster_name(), [server_spec()]) -> ok | {error, Reason::term()}.
 create_cluster(ClusterName, ServerSpecs) -> % TODO: ServerSpecs => raft_config:config()
-    rafte_cluster_sup:start_child(ClusterName, ServerSpecs).
+    Nodes = lists:usort([element(1, Spec) || Spec <- ServerSpecs]),
+    %% TODO: 一つでも失敗したら、他を停止する
+    {Result, []} = rpc:multicall(Nodes, rafte_cluster_sup, start_child, [ClusterName, ServerSpecs]),
+    true = lists:all(fun (R) -> element(1, R) =:= ok end, Result),
+    ok.
 
 -spec delete_cluster(cluster_name()) -> ok.
 delete_cluster(ClusterName) ->
