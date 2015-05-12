@@ -8,7 +8,7 @@
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported API
 %%----------------------------------------------------------------------------------------------------------------------
--export([start_link/1, child_spec/1, start_child/2]).
+-export([start_link/1, child_spec/1, start_child/2, which_servers/1]).
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% 'supervisor' Callback API
@@ -30,6 +30,10 @@ child_spec(ClusterName) ->
 -spec start_child(rafte:cluster_name(), pos_integer()) -> {ok, pid()} | {error, Reason::term()}.
 start_child(ClusterName, MemberCount) ->
     supervisor:start_child(rafte_local_ns:server_sup_name(ClusterName), [MemberCount]).
+
+-spec which_servers(rafte:cluster_name()) -> [pid()].
+which_servers(ClusterName) ->
+    [Pid || {_, Pid, _, _} <- supervisor:which_children(rafte_local_ns:server_sup_name(ClusterName))].
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% 'supervisor' Callback Functions

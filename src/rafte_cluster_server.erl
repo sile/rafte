@@ -11,6 +11,7 @@
 -export([start_link/1]).
 -export([update_server_specs/2]).
 -export([child_spec/1]).
+-export([broadcast/2]).
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% 'gen_server' Callback API
@@ -42,6 +43,10 @@ update_server_specs(ClusterName, ServerSpecs) ->
 child_spec(ClusterName) ->
     {?MODULE, {?MODULE, start_link, [ClusterName]}, permanent, 5000, worker, [?MODULE]}.
 
+-spec broadcast(rafte:cluster_name(), term()) -> ok.
+broadcast(ClusterName, Msg) ->
+    gen_server:cast(rafte_local_ns:cluster_server_name(ClusterName), {broadcast, Msg}).
+
 %%----------------------------------------------------------------------------------------------------------------------
 %% 'gen_server' Callback Functions
 %%----------------------------------------------------------------------------------------------------------------------
@@ -68,6 +73,10 @@ handle_cast({update_server_specs, ServerSpecs}, State0) ->
     %% TODO: 世代交代をハンドリングする
     ok = start_local_raft_servers(State1, ServerSpecs),
     {noreply, State1};
+handle_cast({broadcast, Msg}, State) ->
+    ok = lists:foreach(fun (Node) -> rpc:cast(Node, rafte_server, broadcast_local, [State#state.cluster_name, Msg]) end,
+                       unique_nodes(State#state.server_specs)),
+    {noreply, State};
 handle_cast(Request, State) ->
     {stop, {unknown_cast, Request}, State}.
 
@@ -94,3 +103,7 @@ start_local_raft_servers(State, [Spec | Specs]) when element(1, Spec) =/= node()
 start_local_raft_servers(State, [_Spec | Specs]) -> % TODO: use Spec
     {ok, _} = rafte_server_sup:start_child(State#state.cluster_name, length(State#state.server_specs)),
     start_local_raft_servers(State, Specs).
+
+-spec unique_nodes([rafte:server_spec()]) -> [node()].
+unique_nodes(Specs) ->
+    lists:usort([element(1, Spec) || Spec <- Specs]).
