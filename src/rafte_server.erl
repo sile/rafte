@@ -34,23 +34,30 @@
 
 -define(PERSISTENT, state.persistent#persistent).
 
--record(persistent,
+-record(persistent, % => stable storageに保存される必要がある
         {
           current_term = 0 :: raft_term(),
           voted_for :: undefined | candidate_id(),
-          log = [] :: log(),
-          snapshot = [] :: [{atom(), number()}]
+          log = [] :: log() % NOTE: ログに入っただけではcommitされていない(過半数が保持して初めてcommit)
         }).
 
 -record(common_volatile,
         {
+          %% commit_index > last_applied なら、log[last_applied]を適用して、last_appliedをインクリメントする($5.3)
           commit_index = 0 :: log_index(),
           last_applied = 0 :: log_index()
+
+          %% working_snapshot = [] :: [{atom(), term()}],
+          %% commited_snapshot = [] ::  [{atom(), term()}]
         }).
+
 
 -record(leader_volatile,
         {
+          %% 初期値は自分(leader)のログインデックス(last_applied)
+          %% (followerと齟齬があるなら、共通部分まで辿って上書きする(RPCの一貫))
           next_index = [] :: [{pid(), log_index()}],
+
           match_index = [] :: [{pid(), log_index()}]
         }).
 
@@ -58,7 +65,7 @@
         {
           cluster_name :: rafte:cluster_name(),
           member_count :: pos_integer(),
-          alives = [] :: [pid()], % length(alives) =< member_count-1 (self() is excluded)
+%          alives = [] :: [pid()], % length(alives) =< member_count-1 (self() is excluded)
 
           persistent = #persistent{} :: #persistent{},
           common_volatile = #common_volatile{} :: #common_volatile{},
@@ -69,12 +76,12 @@
           voted_count = 0 :: non_neg_integer()
         }).
 
-%%-type role() :: follower | candidate | leader.
+-type state_name() :: follower | candidate | leader.
 
 %% TODO: カスタマイズ可能にする
--type command() :: {set, atom(), number()}
-                 | {add, atom(), number()}
-                 | {del, atom(), number()}.
+-type command() :: {set, atom(), term()}
+                 | {del, atom(), term()}
+                 | noop. % system command (carry no log entry)
 
 -type raft_term() :: non_neg_integer().
 -type log_index() :: non_neg_integer().
@@ -116,10 +123,12 @@ init([ClusterName, MemberCount]) ->
     {ok, follower, State, Timeout}.
 
 %% @private
-handle_event({request_vote, From, Arg}, StateName, State0) ->
-    {Result, State1} = handle_request_vote(Arg, State0),
+handle_event({request_vote, From, Arg}, StateName0, State0) ->
+    Term = element(1, Arg),
+    {StateName1, State1} = check_rpc_term(Term, StateName0, State0),
+    {Result, State2} = handle_request_vote(Arg, State1),
     ok = rafte_rpc:reply(From, Result),
-    {next_state, StateName, State1, ?NEXT_TIMEOUT};
+    {next_state, StateName1, State2, ?NEXT_TIMEOUT};
 %% TODO: candidate中にappend_entries_rpcを受けた場合の処理 (別のサーバがリーダーになった)
 handle_event(Event, StateName, State) ->
     {stop, {unknown_event, Event, StateName}, State}.
@@ -131,8 +140,8 @@ handle_sync_event(Event, From, StateName, State) ->
 %% @private
 handle_info({Ref, Pid, {reply, {Term, false}}}, candidate, State0 = #state{vote_ref = Ref}) ->
     ?DEBUG("rejected from ~p {term=~p}", candidate, [Pid, Term]),
-    %% TODO: `Term'が自分の値よりも大きい場合は、合わせて更新する必要がありそう？
-    {next_state, candidate, State0, ?NEXT_TIMEOUT};
+    {StateName1, State1} = check_rpc_term(Term, candidate, State0),
+    {next_state, StateName1, State1, ?NEXT_TIMEOUT};
 handle_info({Ref, Pid, {reply, {Term, true}}}, candidate, State0 = #state{vote_ref = Ref}) ->
     ?DEBUG("voted from ~p {term=~p, count=~p/~p}", candidate, [Pid, Term, State0#state.voted_count + 1,
                                                                State0#state.member_count]),
@@ -159,22 +168,33 @@ terminate(_Reason, _StateName, _State) ->
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
+%% [follower]
+%% - candidate/leaderからのRPCに応答する (! 逆にfollower以外は応答しないのか？)
+%% - timeoutしたらcandidateになる
+
 %% @private
 follower(timeout, State0) ->
     State1 = ready_election(State0),
     ?DEBUG("switch to ~p {term=~p}", follower, [candidate, State1#?PERSISTENT.current_term]),
-
     VoteRef = request_vote(State1),
-
     {next_state, candidate, State1#state{vote_ref = VoteRef}, ?NEXT_TIMEOUT}.
+
+%% [candidate]
+%% - condidateへの遷移時:
+%%   - current_term++
+%%   - 自分に投票
+%%   - vote_rpcを他に送る
+%% - 過半数を取得したらleaderに
+%% - append_entire_rpcをleaderから取得したらfollowerに
+%% - timeoutしたら新しい選挙を始める
 
 %% @private
 candidate(timeout, State0) ->
-    %% 投票期限を切れた(maybe split vote)ので、waitを挟んでやり直す
-    Persistent = State0#state.persistent,
-    State1 = State0#state{persistent = Persistent#persistent{voted_for = undefined}},
-    ?DEBUG("vote timed out. switch to ~p {term=~p}", candidate, [follower, State1#?PERSISTENT.current_term]),
-    {next_state, follower, State1#state{vote_ref = undefined}, ?NEXT_TIMEOUT};
+    %% 投票期限を切れた(maybe split vote)ので、もう一度
+    State1 = ready_election(State0),
+    ?DEBUG("vote retry {term=~p}", candidate, [State1#?PERSISTENT.current_term]),
+    VoteRef = request_vote(State1),
+    {next_state, candidate, State1#state{vote_ref = VoteRef}, ?NEXT_TIMEOUT};
 candidate(Event, State) ->
     {stop, {unknown_candiate_event, Event}, State}.
 
@@ -231,3 +251,13 @@ handle_request_vote({Term, CandidateId, LastLogIndex, LastLogTerm}, State = #sta
                     end
             end
     end.
+
+%% NOTE: rpcのリクエストないしレスポンスのtermが自分よりも大きかったら、current_termを更新して、followerになる ($5.1)
+-spec check_rpc_term(raft_term(), state_name(), #state{}) -> {state_name(), #state{}}.
+check_rpc_term(Term, StateName, State0) when Term =< State0#?PERSISTENT.current_term ->
+    {StateName, State0};
+check_rpc_term(Term, StateName, State0 = #state{persistent = P}) ->
+    ?DEBUG("too old term(~p < ~p). switch to follower", StateName, [State0#?PERSISTENT.current_term, Term]),
+    State1 = State0#state{persistent = P#persistent{current_term = Term, voted_for = undefined},
+                          leader_volatile = undefined},
+    {follower, State1}.
