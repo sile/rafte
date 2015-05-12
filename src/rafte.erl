@@ -5,6 +5,8 @@
 %% 未対応機能:
 %% - 動的なクラスタ構成の変更
 %% - 信頼できるストレージ (全ノードがダウンしたらログは失われる)
+%% - ログ圧縮(スナップショット)
+%% - call/{2,3}
 -module(rafte).
 
 %%----------------------------------------------------------------------------------------------------------------------
@@ -52,6 +54,6 @@ call(ClusterName, Arg) ->
 call(ClusterName, Arg, Timeout) ->
     error(not_implemented, [ClusterName, Arg, Timeout]).
 
--spec cast(cluster_name(), term()) -> ok.
+-spec cast(cluster_name(), term()) -> ok. % XXX: raft_server:command()だと仮定する
 cast(ClusterName, Arg) ->
-    error(not_implemented, [ClusterName, Arg]).
+    rafte_server:cast_command(ClusterName, Arg).
