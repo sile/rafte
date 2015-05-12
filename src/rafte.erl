@@ -4,6 +4,7 @@
 %%
 %% 未対応機能:
 %% - 動的なクラスタ構成の変更
+%% - 信頼できるストレージ (全ノードがダウンしたらログは失われる)
 -module(rafte).
 
 %%----------------------------------------------------------------------------------------------------------------------
@@ -25,18 +26,18 @@
 %% Types
 %%----------------------------------------------------------------------------------------------------------------------
 -type server_spec() :: {node(), module(), atom(), [term()]}. % node + MFArgs
--type cluster_name() :: atom().
+-type cluster_name() :: term().
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported Functions
 %%----------------------------------------------------------------------------------------------------------------------
 -spec create_cluster(cluster_name(), [server_spec()]) -> ok | {error, Reason::term()}.
-create_cluster(ClusterName, ServerSpecs) ->
-    error(not_implemented, [ClusterName, ServerSpecs]).
+create_cluster(ClusterName, ServerSpecs) -> % TODO: ServerSpecs => raft_config:config()
+    rafte_cluster_sup:start_child(ClusterName, ServerSpecs).
 
 -spec delete_cluster(cluster_name()) -> ok.
 delete_cluster(ClusterName) ->
-    error(not_implemented, [ClusterName]).
+    rafte_cluster_sup:terminate_child(ClusterName).
 
 -spec call(cluster_name(), term()) -> term().
 call(ClusterName, Arg) ->

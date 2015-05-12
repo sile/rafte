@@ -3,10 +3,11 @@
  [
   {description, "An implementation of the Raft consensus algorithm"},
   {vsn, git},
-  {registered, [rafte_sup]},
+  {registered, [rafte_sup, rafte_cluster_sup, rafte_local_ns]},
   {applications, [
                   kernel,
-                  stdlib
+                  stdlib,
+                  local
                  ]},
   {mod, { rafte_app, []}},
   {env, []}

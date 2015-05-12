@@ -1,33 +1,24 @@
 %% Copyright (c) 2015, Takeru Ohta <phjgt308@gmail.com>
 %%
-%% @doc Root supervisor module
-%% @private
--module(rafte_sup).
+%% @doc TODO
+%%
+%% TODO: gen_fsm
+-module(rafte_server).
 
--behaviour(supervisor).
+%% -behaviour(gen_fsm).
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported API
 %%----------------------------------------------------------------------------------------------------------------------
--export([start_link/0]).
+-export([child_spec/1]).
 
 %%----------------------------------------------------------------------------------------------------------------------
-%% 'supervisor' Callback API
+%% 'gen_fsm' Callback API
 %%----------------------------------------------------------------------------------------------------------------------
--export([init/1]).
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported Functions
 %%----------------------------------------------------------------------------------------------------------------------
-%% @doc Starts supervisor process
--spec start_link() -> {ok, pid()} | {error, Reason::term()}.
-start_link() ->
-    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
-
-%%----------------------------------------------------------------------------------------------------------------------
-%% 'supervisor' Callback Functions
-%%----------------------------------------------------------------------------------------------------------------------
-%% @private
-init([]) ->
-    Children = [rafte_local_ns:child_spec(), rafte_cluster_sup:child_spec()],
-    {ok, { {rest_for_one, 5, 10}, Children} }.
+-spec child_spec(rafte:cluster_name()) -> supervisor:child_spec().
+child_spec(ClusterName) ->
+    {?MODULE, {?MODULE, start_link, [ClusterName]}, permanent, 5000, worker, [?MODULE]}.
